@@ -1,0 +1,281 @@
+---
+# ─────────────────────────────────────────────
+#  git-codebase-mock – serves Python source files over HTTP
+#  Uses a Python http.server so no custom image is needed.
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-codebase-mock-files
+  namespace: org-mind
+data:
+  order_management_service.py: |
+    """
+    Order Management Service – Sample Source Code
+    Hosted by git-codebase-mock for RAG ingestion.
+    """
+    from __future__ import annotations
+    import time, uuid
+    from enum import Enum
+    from typing import List, Optional
+    from fastapi import FastAPI, HTTPException, Header
+    from pydantic import BaseModel, Field
+
+    app = FastAPI(title="Order Management Service", version="1.0.0")
+
+    class OrderStatus(str, Enum):
+        PENDING = "pending"
+        PROCESSING = "processing"
+        SHIPPED = "shipped"
+        DELIVERED = "delivered"
+        CANCELLED = "cancelled"
+
+    class OrderItem(BaseModel):
+        product_id: str
+        quantity: int = Field(gt=0)
+        unit_price: float = Field(gt=0)
+
+    class Order(BaseModel):
+        order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+        customer_id: str
+        items: List[OrderItem]
+        status: OrderStatus = OrderStatus.PENDING
+        created_at: float = Field(default_factory=time.time)
+        total: float = 0.0
+
+        def calculate_total(self):
+            self.total = sum(i.quantity * i.unit_price for i in self.items)
+            return self.total
+
+    _orders: dict = {}
+
+    @app.post("/orders", status_code=201)
+    async def create_order(order: Order, authorization: Optional[str] = Header(None)):
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing Authorization")
+        order.calculate_total()
+        _orders[order.order_id] = order
+        return order
+
+    @app.get("/orders/{order_id}")
+    async def get_order(order_id: str):
+        if order_id not in _orders:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+        return _orders[order_id]
+
+  pii_encryption_utility.py: |
+    """
+    PII Encryption Utility – AES-256-GCM field-level encryption.
+    """
+    import base64, os
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    def encrypt_field(plaintext: str, key_b64: str) -> str:
+        key = base64.b64decode(key_b64)
+        aesgcm = AESGCM(key)
+        nonce = os.urandom(12)
+        ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
+        return base64.b64encode(nonce + ct).decode()
+
+    def decrypt_field(encrypted_b64: str, key_b64: str) -> str:
+        key = base64.b64decode(key_b64)
+        aesgcm = AESGCM(key)
+        raw = base64.b64decode(encrypted_b64)
+        return aesgcm.decrypt(raw[:12], raw[12:], None).decode()
+
+    PII_FIELDS = ["name", "email", "phone", "ssn", "date_of_birth", "address"]
+
+    def encrypt_pii_record(record: dict, key_b64: str) -> dict:
+        return {k: encrypt_field(v, key_b64) if k in PII_FIELDS and isinstance(v, str) else v
+                for k, v in record.items()}
+
+    def decrypt_pii_record(record: dict, key_b64: str) -> dict:
+        return {k: decrypt_field(v, key_b64) if k in PII_FIELDS and isinstance(v, str) else v
+                for k, v in record.items()}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-codebase-mock
+  namespace: org-mind
+  labels:
+    app: git-codebase-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: git-codebase-mock
+  template:
+    metadata:
+      labels:
+        app: git-codebase-mock
+    spec:
+      containers:
+        - name: file-server
+          image: python:3.11-slim
+          command:
+            - python
+            - -m
+            - http.server
+            - "8080"
+            - --directory
+            - /code
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: code-files
+              mountPath: /code
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: code-files
+          configMap:
+            name: git-codebase-mock-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-codebase-mock
+  namespace: org-mind
+spec:
+  selector:
+    app: git-codebase-mock
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# ─────────────────────────────────────────────
+#  doc-site – Nginx serving documentation HTML
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: doc-site-html
+  namespace: org-mind
+data:
+  index.html: |
+    <!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Org-Mind Docs</title></head>
+    <body><h1>Org-Mind Platform Documentation</h1>
+    <ul>
+      <li><a href="/architecture.html">Architecture Decision Records</a></li>
+      <li><a href="/runbooks.html">Runbooks</a></li>
+      <li><a href="/onboarding.html">Onboarding Guide</a></li>
+      <li><a href="/api-reference.html">API Reference</a></li>
+    </ul></body></html>
+
+  architecture.html: |
+    <!DOCTYPE html><html><head><meta charset="UTF-8"/><title>ADR – Org-Mind</title></head>
+    <body><h1>Architecture Decision Records</h1>
+    <h2>ADR-001: Use Qdrant for Hybrid RAG</h2>
+    <p>Qdrant supports dense+sparse hybrid search natively. Selected over pgvector for richer filtering and named-vector collections.</p>
+    <h2>ADR-002: FastMCP over Streamable HTTP</h2>
+    <p>MCP server uses FastMCP with streamable HTTP transport. NodePort 30808 for local IDE clients.</p>
+    <h2>ADR-003: Keycloak for OIDC/OAuth2</h2>
+    <p>Keycloak provides realm isolation, client credentials, and RBAC role mapping compatible with JWT validation in FastAPI.</p>
+    </body></html>
+
+  runbooks.html: |
+    <!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Runbooks – Org-Mind</title></head>
+    <body><h1>Runbooks</h1>
+    <h2>RB-001: Restart failing pod</h2>
+    <pre>kubectl rollout restart deployment/&lt;name&gt; -n org-mind</pre>
+    <h2>RB-002: Order Service error spike</h2>
+    <p>Check /orders/error-demo – intentional 500 route for telemetry demo. Set ERROR_DEMO_ENABLED=false to disable.</p>
+    <h2>RB-003: Re-init Qdrant collections</h2>
+    <pre>kubectl exec -it deployment/mcp-server -n org-mind -- python /app/init_collections.py</pre>
+    </body></html>
+
+  onboarding.html: |
+    <!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Onboarding – Org-Mind</title></head>
+    <body><h1>Developer Onboarding</h1>
+    <h2>Quick Start</h2>
+    <ol>
+      <li>Install KinD or Minikube</li>
+      <li>Run: <code>bash deploy.sh</code></li>
+      <li>Access Grafana at http://localhost:30300 (admin/grafana_pass_2024)</li>
+      <li>Access Keycloak at http://localhost:30080 (admin/admin_pass_2024)</li>
+      <li>Get token: POST to /realms/org-mind/protocol/openid-connect/token</li>
+    </ol>
+    </body></html>
+
+  api-reference.html: |
+    <!DOCTYPE html><html><head><meta charset="UTF-8"/><title>API Reference – Org-Mind</title></head>
+    <body><h1>Order Service API Reference</h1>
+    <p>Base URL: http://localhost:30800 | Auth: Bearer token</p>
+    <ul>
+      <li>POST /orders – Create order (requires order-writer role)</li>
+      <li>GET /orders/{id} – Get order by ID</li>
+      <li>GET /orders?customer_id= – List orders</li>
+      <li>PATCH /orders/{id}/status – Update status</li>
+      <li>DELETE /orders/{id} – Cancel order</li>
+      <li>GET /metrics – Prometheus metrics</li>
+      <li>GET /orders/error-demo – Intentional 500 for telemetry testing</li>
+      <li>GET /orders/slow-demo – Intentional slow route (3s latency)</li>
+    </ul>
+    </body></html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-site
+  namespace: org-mind
+  labels:
+    app: doc-site
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-site
+  template:
+    metadata:
+      labels:
+        app: doc-site
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html-files
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: html-files
+          configMap:
+            name: doc-site-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doc-site
+  namespace: org-mind
+spec:
+  selector:
+    app: doc-site
+  ports:
+    - port: 80
+      targetPort: 80

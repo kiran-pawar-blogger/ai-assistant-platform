@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><title>Runbooks – Org-Mind</title>
+<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#333}h1{color:#1a73e8}code{background:#f0f0f0;padding:2px 6px;border-radius:4px}pre{background:#1e1e1e;color:#dcdcdc;padding:16px;border-radius:8px;overflow:auto}.warn{background:#fff3cd;border-left:4px solid #ffc107;padding:10px 14px;margin:12px 0}.info{background:#d1ecf1;border-left:4px solid #17a2b8;padding:10px 14px;margin:12px 0}</style>
+</head>
+<body>
+<h1>Operational Runbooks</h1>
+
+<h2>RB-001: Restart a failing pod</h2>
+<pre>kubectl rollout restart deployment/&lt;name&gt; -n org-mind</pre>
+<p>Check pod logs: <code>kubectl logs -f deployment/&lt;name&gt; -n org-mind</code></p>
+
+<h2>RB-002: Order Service 5xx spike response</h2>
+<ol>
+  <li>Open Grafana → <strong>Order Service Dashboard</strong> → check <em>HTTP Error Rate</em> panel.</li>
+  <li>Identify the problematic route in the Skywalking UI → <strong>Trace</strong> tab.</li>
+  <li>If <code>/orders/error-demo</code> is the culprit, it is intentional (latency injection). Set env var <code>ERROR_DEMO_ENABLED=false</code> to disable.</li>
+  <li>Restart the deployment: <code>kubectl rollout restart deployment/order-service -n org-mind</code></li>
+</ol>
+<div class="warn">⚠ The <code>/orders/error-demo</code> endpoint is intentionally slow and returns 500. Do not page for this route.</div>
+
+<h2>RB-003: Qdrant collection not found</h2>
+<p>Collections are created by the MCP server init job. Re-run collection init:</p>
+<pre>kubectl exec -it deployment/mcp-server -n org-mind -- python /app/init_collections.py</pre>
+
+<h2>RB-004: Keycloak token validation failure</h2>
+<ol>
+  <li>Verify Keycloak is healthy: <code>kubectl get pods -n org-mind -l app=keycloak</code></li>
+  <li>Confirm the realm exists: <code>curl http://localhost:30080/realms/org-mind/.well-known/openid-configuration</code></li>
+  <li>Check client secret is in sync: confirm <code>keycloak-admin-secret</code> matches the realm config.</li>
+</ol>
+
+<h2>RB-005: Skywalking OAP not receiving traces</h2>
+<ol>
+  <li>Confirm OAP pod is running: <code>kubectl get pods -n org-mind -l app=skywalking-oap</code></li>
+  <li>Check order-service env <code>SW_AGENT_COLLECTOR_BACKEND_SERVICES</code> points to <code>skywalking-oap:11800</code>.</li>
+  <li>Restart order-service to re-establish the gRPC connection.</li>
+</ol>
+
+<h2>RB-006: Scale order-service under load</h2>
+<pre>kubectl scale deployment/order-service --replicas=3 -n org-mind</pre>
+<div class="info">ℹ Prometheus will auto-discover new pods via annotations. No Grafana reconfiguration needed.</div>
+</body>
+</html>

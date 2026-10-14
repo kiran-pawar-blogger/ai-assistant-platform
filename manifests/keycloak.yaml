@@ -1,0 +1,280 @@
+---
+# ─────────────────────────────────────────────
+#  PostgreSQL – Keycloak backend
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-db-secret
+  namespace: org-mind
+type: Opaque
+stringData:
+  POSTGRES_DB: keycloak
+  POSTGRES_USER: keycloak
+  POSTGRES_PASSWORD: keycloak_pass_2024
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-postgres-pvc
+  namespace: org-mind
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-postgres
+  namespace: org-mind
+  labels:
+    app: keycloak-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-postgres
+  template:
+    metadata:
+      labels:
+        app: keycloak-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: keycloak-db-secret
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "keycloak"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: keycloak-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-postgres
+  namespace: org-mind
+spec:
+  selector:
+    app: keycloak-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# ─────────────────────────────────────────────
+#  Keycloak – IAM / OIDC provider
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin-secret
+  namespace: org-mind
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN: admin
+  KEYCLOAK_ADMIN_PASSWORD: admin_pass_2024
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: org-mind
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf --connect-timeout 2 telnet://keycloak-postgres:5432; do
+                echo "Waiting for postgres..."; sleep 3;
+              done
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:23.0
+          args: ["start-dev", "--import-realm"]
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: keycloak-admin-secret
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://keycloak-postgres:5432/keycloak
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-secret
+                  key: POSTGRES_USER
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-secret
+                  key: POSTGRES_PASSWORD
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY
+              value: edge
+            # KC_OPTS is not used; --import-realm flag above handles realm bootstrap
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 15
+      volumes:
+        - name: realm-config
+          configMap:
+            name: keycloak-realm-config
+---
+# Realm bootstrap ConfigMap – creates realm, client and test user
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-config
+  namespace: org-mind
+data:
+  realm-export.json: |
+    {
+      "realm": "org-mind",
+      "enabled": true,
+      "sslRequired": "none",
+      "registrationAllowed": false,
+      "clients": [
+        {
+          "clientId": "order-service",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": "order-service-secret-2024",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": true,
+          "defaultClientScopes": ["openid", "profile", "email", "roles"],
+          "attributes": {}
+        },
+        {
+          "clientId": "mcp-server",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": "mcp-server-secret-2024",
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": true,
+          "defaultClientScopes": ["openid", "roles"],
+          "attributes": {}
+        }
+      ],
+      "roles": {
+        "realm": [
+          {"name": "order-reader", "description": "Can read orders"},
+          {"name": "order-writer", "description": "Can create and update orders"},
+          {"name": "admin",        "description": "Full admin access"}
+        ]
+      },
+      "users": [
+        {
+          "username": "testuser",
+          "enabled": true,
+          "email": "testuser@org-mind.local",
+          "credentials": [{"type": "password", "value": "Test@1234", "temporary": false}],
+          "realmRoles": ["order-reader", "order-writer"]
+        },
+        {
+          "username": "admin-user",
+          "enabled": true,
+          "email": "admin@org-mind.local",
+          "credentials": [{"type": "password", "value": "Admin@1234", "temporary": false}],
+          "realmRoles": ["admin", "order-reader", "order-writer"]
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: org-mind
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+# NodePort for local browser access
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-nodeport
+  namespace: org-mind
+spec:
+  selector:
+    app: keycloak
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080

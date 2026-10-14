@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><title>Developer Onboarding – Org-Mind</title>
+<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#333}h1{color:#1a73e8}code{background:#f0f0f0;padding:2px 6px;border-radius:4px}pre{background:#1e1e1e;color:#dcdcdc;padding:16px;border-radius:8px;overflow:auto}ol li{margin-bottom:8px}</style>
+</head>
+<body>
+<h1>Developer Onboarding Guide</h1>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>Docker Desktop or Podman (for KinD/Minikube)</li>
+  <li><a href="https://kind.sigs.k8s.io/docs/user/quick-start/">KinD</a> or <a href="https://minikube.sigs.k8s.io/docs/start/">Minikube</a></li>
+  <li><code>kubectl</code> v1.28+</li>
+  <li>Python 3.11+</li>
+  <li>Docker Buildx (for building local images)</li>
+</ul>
+
+<h2>Quick Start</h2>
+<ol>
+  <li>Clone the repository: <code>git clone https://github.com/org/org-mind.git</code></li>
+  <li>Create the cluster: <code>kind create cluster --name org-mind</code></li>
+  <li>Run the bootstrap script: <code>bash deploy.sh</code></li>
+  <li>Wait for all pods to be Ready: <code>kubectl get pods -n org-mind -w</code></li>
+</ol>
+
+<h2>Service URLs (after deploy)</h2>
+<table style="border-collapse:collapse;width:100%">
+<tr style="background:#f4f4f4"><th style="border:1px solid #ddd;padding:8px">Service</th><th style="border:1px solid #ddd;padding:8px">Local URL</th><th style="border:1px solid #ddd;padding:8px">Credentials</th></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Keycloak Admin</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30080/admin</td><td style="border:1px solid #ddd;padding:8px">admin / admin_pass_2024</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Grafana</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30300</td><td style="border:1px solid #ddd;padding:8px">admin / grafana_pass_2024</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Prometheus</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30909</td><td style="border:1px solid #ddd;padding:8px">None</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Skywalking UI</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30880</td><td style="border:1px solid #ddd;padding:8px">None</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Order Service</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30800</td><td style="border:1px solid #ddd;padding:8px">Bearer token from Keycloak</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">MCP Server</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30808/mcp</td><td style="border:1px solid #ddd;padding:8px">Bearer token from Keycloak</td></tr>
+<tr><td style="border:1px solid #ddd;padding:8px">Qdrant Dashboard</td><td style="border:1px solid #ddd;padding:8px">http://localhost:30633/dashboard</td><td style="border:1px solid #ddd;padding:8px">None</td></tr>
+</table>
+
+<h2>Getting a Test Token</h2>
+<pre>curl -s -X POST http://localhost:30080/realms/org-mind/protocol/openid-connect/token \
+  -d "client_id=order-service" \
+  -d "client_secret=order-service-secret-2024" \
+  -d "username=testuser" \
+  -d "password=Test@1234" \
+  -d "grant_type=password" | python -m json.tool</pre>
+
+<h2>Connecting Claude Desktop to MCP Server</h2>
+<p>Add the following to your <code>claude_desktop_config.json</code>:</p>
+<pre>{
+  "mcpServers": {
+    "org-mind": {
+      "url": "http://localhost:30808/mcp",
+      "headers": {
+        "Authorization": "Bearer &lt;your-token&gt;"
+      }
+    }
+  }
+}</pre>
+</body>
+</html>

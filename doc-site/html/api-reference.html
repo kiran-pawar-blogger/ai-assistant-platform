@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><title>Order Service API Reference – Org-Mind</title>
+<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#333}h1{color:#1a73e8}code{background:#f0f0f0;padding:2px 6px;border-radius:4px}pre{background:#1e1e1e;color:#dcdcdc;padding:16px;border-radius:8px;overflow:auto}.method{display:inline-block;padding:3px 10px;border-radius:4px;font-weight:bold;font-size:.85em}.get{background:#61affe;color:#fff}.post{background:#49cc90;color:#fff}.patch{background:#fca130;color:#fff}.delete{background:#f93e3e;color:#fff}.endpoint{margin:24px 0;border:1px solid #ddd;border-radius:8px;padding:16px}</style>
+</head>
+<body>
+<h1>Order Service API Reference</h1>
+<p>Base URL: <code>http://localhost:30800</code> | Auth: Bearer token from Keycloak realm <code>org-mind</code></p>
+
+<div class="endpoint">
+  <span class="method post">POST</span> <code>/orders</code>
+  <p>Create a new order. Requires <code>order-writer</code> role.</p>
+  <pre>{
+  "customer_id": "cust-001",
+  "items": [
+    {"product_id": "prod-A", "quantity": 2, "unit_price": 29.99}
+  ]
+}</pre>
+</div>
+
+<div class="endpoint">
+  <span class="method get">GET</span> <code>/orders/{order_id}</code>
+  <p>Retrieve a single order by ID.</p>
+</div>
+
+<div class="endpoint">
+  <span class="method get">GET</span> <code>/orders?customer_id=cust-001</code>
+  <p>List orders. Optional <code>customer_id</code> filter.</p>
+</div>
+
+<div class="endpoint">
+  <span class="method patch">PATCH</span> <code>/orders/{order_id}/status</code>
+  <p>Update order status. Valid values: <code>pending</code>, <code>processing</code>, <code>shipped</code>, <code>delivered</code>, <code>cancelled</code>.</p>
+  <pre>?status=shipped</pre>
+</div>
+
+<div class="endpoint">
+  <span class="method delete">DELETE</span> <code>/orders/{order_id}</code>
+  <p>Cancel an order (sets status to <code>cancelled</code>).</p>
+</div>
+
+<div class="endpoint">
+  <span class="method get">GET</span> <code>/metrics</code>
+  <p>Prometheus metrics endpoint. Scraped automatically by Prometheus.</p>
+</div>
+
+<div class="endpoint" style="border-color:#f93e3e">
+  <span class="method get">GET</span> <code>/orders/error-demo</code>
+  <p>⚠ <strong>Intentional error route.</strong> Simulates a 500 error with 2-second latency for telemetry demo purposes.</p>
+</div>
+
+<div class="endpoint" style="border-color:#fca130">
+  <span class="method get">GET</span> <code>/orders/slow-demo</code>
+  <p>⚠ <strong>Intentional latency route.</strong> Sleeps for a configurable duration (default 3s). Used to trigger Skywalking slow-trace alerts.</p>
+</div>
+
+<h2>Prometheus Metrics Exposed</h2>
+<ul>
+  <li><code>order_service_requests_total</code> – Counter by method, endpoint, status_code</li>
+  <li><code>order_service_request_duration_seconds</code> – Histogram of request latency</li>
+  <li><code>order_service_active_orders</code> – Gauge of in-flight orders</li>
+  <li><code>order_service_errors_total</code> – Counter of 5xx responses</li>
+</ul>
+</body>
+</html>

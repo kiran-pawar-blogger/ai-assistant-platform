@@ -1,0 +1,111 @@
+---
+# ─────────────────────────────────────────────
+#  Qdrant – Vector Store for Hybrid RAG
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-storage-pvc
+  namespace: org-mind
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: org-mind
+  labels:
+    app: qdrant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6333"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.7.4
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          env:
+            - name: QDRANT__SERVICE__HTTP_PORT
+              value: "6333"
+            - name: QDRANT__SERVICE__GRPC_PORT
+              value: "6334"
+            - name: QDRANT__LOG_LEVEL
+              value: "INFO"
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: qdrant-storage
+          persistentVolumeClaim:
+            claimName: qdrant-storage-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: org-mind
+  labels:
+    app: qdrant
+spec:
+  selector:
+    app: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+  type: ClusterIP
+---
+# NodePort for local dashboard access
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-nodeport
+  namespace: org-mind
+spec:
+  selector:
+    app: qdrant
+  type: NodePort
+  ports:
+    - port: 6333
+      targetPort: 6333
+      nodePort: 30633

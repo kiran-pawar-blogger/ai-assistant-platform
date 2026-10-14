@@ -1,0 +1,60 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: org-mind
+  labels:
+    app.kubernetes.io/managed-by: org-mind
+    environment: sandbox
+---
+# ServiceAccount for the MCP server with least-privilege RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-server-sa
+  namespace: org-mind
+---
+# ClusterRole: read-only access to pods, services, endpoints
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-server-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "namespaces", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-server-reader-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-server-reader
+subjects:
+  - kind: ServiceAccount
+    name: mcp-server-sa
+    namespace: org-mind
+---
+# Shared ConfigMap: cluster-wide service URLs consumed by order-service and mcp-server
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: org-mind
+data:
+  KEYCLOAK_URL: "http://keycloak.org-mind.svc.cluster.local:8080"
+  KEYCLOAK_REALM: "org-mind"
+  QDRANT_URL: "http://qdrant.org-mind.svc.cluster.local:6333"
+  PROMETHEUS_URL: "http://prometheus.org-mind.svc.cluster.local:9090"
+  SKYWALKING_OAP_URL: "http://skywalking-oap.org-mind.svc.cluster.local:12800"
+  ORDER_SERVICE_URL: "http://order-service.org-mind.svc.cluster.local:8000"
+  GIT_MOCK_URL: "http://git-codebase-mock.org-mind.svc.cluster.local:8080"
+  DOC_SITE_URL: "http://doc-site.org-mind.svc.cluster.local:80"

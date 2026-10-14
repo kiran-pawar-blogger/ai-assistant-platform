@@ -1,0 +1,116 @@
+---
+# MCP Server - FastMCP 2.x over Streamable HTTP
+# Port 8080: FastMCP /mcp endpoint (IDE clients)
+# Port 8081: sidecar /health + /metrics (K8s probes + Prometheus)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: org-mind
+  labels:
+    app: mcp-server
+    version: "1.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: mcp-server-sa
+      initContainers:
+        - name: wait-for-qdrant
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf --connect-timeout 2 http://qdrant:6333/healthz; do
+                echo "Waiting for Qdrant..."; sleep 5;
+              done
+        - name: wait-for-keycloak
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf --connect-timeout 2 http://keycloak:8080/realms/master; do
+                echo "Waiting for Keycloak..."; sleep 5;
+              done
+      containers:
+        - name: mcp-server
+          image: org-mind/mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mcp
+              containerPort: 8080
+            - name: sidecar
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: platform-config
+          env:
+            - name: TOKEN_AUDIENCE
+              value: "account"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 8
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 40
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: org-mind
+  labels:
+    app: mcp-server
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - name: mcp
+      port: 8080
+      targetPort: 8080
+    - name: sidecar
+      port: 8081
+      targetPort: 8081
+  type: ClusterIP
+---
+# NodePort for IDE client access (Claude Desktop / Cursor)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server-nodeport
+  namespace: org-mind
+spec:
+  selector:
+    app: mcp-server
+  type: NodePort
+  ports:
+    - name: mcp
+      port: 8080
+      targetPort: 8080
+      nodePort: 30808

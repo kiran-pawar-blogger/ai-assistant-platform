@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><title>Architecture Decision Records – Org-Mind</title>
+<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#333}h1{color:#1a73e8}code{background:#f0f0f0;padding:2px 6px;border-radius:4px}pre{background:#1e1e1e;color:#dcdcdc;padding:16px;border-radius:8px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f4f4f4}</style>
+</head>
+<body>
+<h1>Architecture Decision Records (ADR)</h1>
+
+<h2>ADR-001: Service Mesh vs Direct K8s Services</h2>
+<p><strong>Status:</strong> Accepted | <strong>Date:</strong> 2024-01-15</p>
+<p><strong>Context:</strong> The platform needs inter-service communication with observability and security built in.</p>
+<p><strong>Decision:</strong> Use plain Kubernetes Services and Prometheus annotations for scraping in the sandbox. A service mesh (Istio/Linkerd) adds overhead unsuitable for a local KinD/Minikube cluster.</p>
+<p><strong>Consequences:</strong> Simpler deployment; mTLS deferred to production graduation.</p>
+
+<h2>ADR-002: Vector Store Selection – Qdrant</h2>
+<p><strong>Status:</strong> Accepted | <strong>Date:</strong> 2024-02-03</p>
+<p><strong>Context:</strong> The MCP RAG engine requires a vector store supporting hybrid search (dense + sparse).</p>
+<p><strong>Decision:</strong> Qdrant v1.7+ natively supports hybrid search with named vectors and payload filtering. PgVector was considered but lacks native hybrid scoring without extensions.</p>
+<p><strong>Consequences:</strong> Qdrant HTTP API is used from the MCP server; GRPC available for future performance improvements.</p>
+
+<h2>ADR-003: MCP Server Transport – Streamable HTTP</h2>
+<p><strong>Status:</strong> Accepted | <strong>Date:</strong> 2024-03-10</p>
+<p><strong>Context:</strong> The Model Context Protocol server must be accessible from IDE clients (Claude Desktop, Cursor).</p>
+<p><strong>Decision:</strong> FastMCP with Streamable HTTP transport (SSE fallback). This maps naturally to a Kubernetes Service exposed via NodePort or port-forward.</p>
+<p><strong>Consequences:</strong> Clients connect to <code>http://localhost:30808/mcp</code> during local development.</p>
+
+<h2>Component Inventory</h2>
+<table>
+<tr><th>Component</th><th>Image</th><th>Port</th><th>Purpose</th></tr>
+<tr><td>Keycloak</td><td>quay.io/keycloak/keycloak:23.0</td><td>8080</td><td>OIDC / OAuth2 IAM</td></tr>
+<tr><td>Keycloak PostgreSQL</td><td>postgres:15-alpine</td><td>5432</td><td>Keycloak backend DB</td></tr>
+<tr><td>Qdrant</td><td>qdrant/qdrant:v1.7.4</td><td>6333/6334</td><td>Vector store (RAG)</td></tr>
+<tr><td>Order Service</td><td>org-mind/order-service:latest</td><td>8000</td><td>Sample FastAPI workload</td></tr>
+<tr><td>MCP Server</td><td>org-mind/mcp-server:latest</td><td>8080</td><td>FastMCP gateway</td></tr>
+<tr><td>Prometheus</td><td>prom/prometheus:v2.48.0</td><td>9090</td><td>Metrics collection</td></tr>
+<tr><td>Grafana</td><td>grafana/grafana:10.2.2</td><td>3000</td><td>Dashboards</td></tr>
+<tr><td>Skywalking OAP</td><td>apache/skywalking-oap-server:9.7.0</td><td>12800/11800</td><td>APM / tracing</td></tr>
+<tr><td>Skywalking UI</td><td>apache/skywalking-ui:9.7.0</td><td>8080</td><td>APM dashboard</td></tr>
+<tr><td>git-codebase-mock</td><td>python:3.11-slim</td><td>8080</td><td>Source code host for RAG</td></tr>
+<tr><td>doc-site</td><td>nginx:1.25-alpine</td><td>80</td><td>Documentation host for RAG</td></tr>
+</table>
+</body>
+</html>

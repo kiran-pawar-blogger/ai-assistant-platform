@@ -1,0 +1,113 @@
+---
+# ─────────────────────────────────────────────
+#  Order Management Service
+# ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: org-mind
+  labels:
+    app: order-service
+    version: "1.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+      annotations:
+        # Prometheus auto-discovery
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      initContainers:
+        - name: wait-for-keycloak
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf --connect-timeout 2 http://keycloak:8080/realms/master; do
+                echo "Waiting for Keycloak..."; sleep 5;
+              done
+      containers:
+        - name: order-service
+          image: org-mind/order-service:latest
+          # Use IfNotPresent so KinD / Minikube loads the locally built image
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+          env:
+            - name: ERROR_DEMO_ENABLED
+              value: "true"
+            - name: SLOW_DEMO_SECONDS
+              value: "3"
+            - name: TOKEN_AUDIENCE
+              value: "account"
+            # Skywalking agent environment overrides
+            - name: SW_AGENT_NAME
+              value: "order-service"
+            - name: SW_AGENT_COLLECTOR_BACKEND_SERVICES
+              value: "skywalking-oap.org-mind.svc.cluster.local:11800"
+            - name: SW_AGENT_LOGGING_LEVEL
+              value: "WARNING"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: org-mind
+  labels:
+    app: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+# NodePort for local API testing / curl
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service-nodeport
+  namespace: org-mind
+spec:
+  selector:
+    app: order-service
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30800

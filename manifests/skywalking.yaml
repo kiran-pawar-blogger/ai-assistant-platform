@@ -1,0 +1,190 @@
+---
+# ─────────────────────────────────────────────
+#  Apache Skywalking OAP Server
+# ─────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skywalking-oap-config
+  namespace: org-mind
+data:
+  # Override application.yml for in-memory H2 storage (sandbox).
+  # Swap to elasticsearch for production.
+  SW_STORAGE: "h2"
+  SW_STORAGE_H2_URL: "jdbc:h2:mem:skywalking-oap-db;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=FALSE"
+  SW_STORAGE_H2_USER: "sa"
+  SW_CORE_GRPC_PORT: "11800"
+  SW_CORE_REST_PORT: "12800"
+  SW_TELEMETRY: "prometheus"
+  SW_TELEMETRY_PROMETHEUS_HOST: "0.0.0.0"
+  SW_TELEMETRY_PROMETHEUS_PORT: "1234"
+  # Reduce memory pressure in KinD
+  JAVA_OPTS: "-Xms256m -Xmx512m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywalking-oap
+  namespace: org-mind
+  labels:
+    app: skywalking-oap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: skywalking-oap
+  template:
+    metadata:
+      labels:
+        app: skywalking-oap
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "1234"
+        prometheus.io/path: "/metrics"
+    spec:
+      initContainers:
+        # OAP needs a few seconds before the UI can connect
+        - name: wait-init
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep 5"]
+      containers:
+        - name: oap
+          image: apache/skywalking-oap-server:9.7.0
+          ports:
+            - name: grpc
+              containerPort: 11800
+            - name: http
+              containerPort: 12800
+            - name: prom
+              containerPort: 1234
+          envFrom:
+            - configMapRef:
+                name: skywalking-oap-config
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+          readinessProbe:
+            tcpSocket:
+              port: 12800
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 12800
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: skywalking-oap
+  namespace: org-mind
+  labels:
+    app: skywalking-oap
+spec:
+  selector:
+    app: skywalking-oap
+  ports:
+    - name: grpc
+      port: 11800
+      targetPort: 11800
+    - name: http
+      port: 12800
+      targetPort: 12800
+    - name: prom
+      port: 1234
+      targetPort: 1234
+  type: ClusterIP
+---
+# ─────────────────────────────────────────────
+#  Apache Skywalking UI
+# ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skywalking-ui
+  namespace: org-mind
+  labels:
+    app: skywalking-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: skywalking-ui
+  template:
+    metadata:
+      labels:
+        app: skywalking-ui
+    spec:
+      initContainers:
+        - name: wait-for-oap
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf --connect-timeout 3 -X POST \
+                -H "Content-Type: application/json" \
+                -d '{"query":"{version}"}' \
+                http://skywalking-oap:12800/graphql > /dev/null 2>&1; do
+                echo "Waiting for OAP..."; sleep 5;
+              done
+      containers:
+        - name: skywalking-ui
+          image: apache/skywalking-ui:9.7.0
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SW_OAP_ADDRESS
+              value: "http://skywalking-oap.org-mind.svc.cluster.local:12800"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: skywalking-ui
+  namespace: org-mind
+  labels:
+    app: skywalking-ui
+spec:
+  selector:
+    app: skywalking-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+# NodePort for local browser access
+apiVersion: v1
+kind: Service
+metadata:
+  name: skywalking-ui-nodeport
+  namespace: org-mind
+spec:
+  selector:
+    app: skywalking-ui
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30880
